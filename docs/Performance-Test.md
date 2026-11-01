@@ -58,8 +58,8 @@ The existing **Development APK** workflow is unchanged. **Performance APK** runs
 on matching pull requests into `iceraven` and supports manual dispatch once
 present on the default branch. It checks fixture contracts and JVM calculation
 tests, builds optimized `forkRelease`, signs and verifies APKs, and retains them
-as artifacts for seven days. It reuses the working development toolchain and
-memory limits, but does not publish releases or upload to Play.
+as artifacts for seven days. It reuses the working development toolchain,
+but does not publish releases or upload to Play.
 
 The measurement tests run in the independent JVM build at
 `automation/iceraven/performance-tests`. It imports Kotlin and JUnit versions
@@ -80,7 +80,18 @@ cannot update differently signed Iceraven installations and may conflict with
 an installed debug variant. Back up data before uninstalling anything. These
 are review APKs, not a stable production update channel.
 
-The job has a two-hour timeout and can hit runner memory/disk limits. Actions
+The job has a two-hour timeout; its optimized build step is limited to 60 minutes.
+R8 optimization and resource shrinking stay enabled. The optimized build uses
+one Gradle worker, two R8 threads, and a 7 GiB Gradle/R8 heap with a 1.5 GiB
+metaspace cap. Kotlin runs inside that JVM instead of retaining a separate
+compiler heap. JVM heap exhaustion terminates promptly. A guard requires at
+least 14 GiB physical RAM: the standard public Linux runner provides 16 GB,
+whereas a smaller private-repository runner needs an appropriately provisioned
+larger runner. No paid/custom runner label is selected automatically. The
+Development APK workflow keeps its existing memory settings.
+
+These limits still need verification by Actions; no APK build was run locally.
+The job can hit runner memory/disk limits. Actions
 minutes and artifact/cache storage are charged according to the repository's
 plan. A successful signature check is not evidence of runtime correctness.
 

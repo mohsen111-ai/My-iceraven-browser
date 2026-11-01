@@ -77,11 +77,23 @@ jobs:
           PY
 
       - name: Build optimized Iceraven APKs
+        timeout-minutes: 60
         run: |
+          # Standard public Linux runners have 16 GB RAM; private ones may have 7 GB.
+          # Budget: 7 GiB heap + 1.5 GiB metaspace, leaving room for native memory/OS.
+          available_kib=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+          if (( available_kib < 14 * 1024 * 1024 )); then
+            echo '::error::Optimized R8 build requires a runner with at least 14 GiB RAM. Use the standard public 16 GB Linux runner or a provisioned runner with at least 16 GB.'
+            exit 1
+          fi
+          free -h
+          # R8 runs inside Gradle. Keep Kotlin in-process to avoid a second compiler heap.
+          # Exit immediately on heap exhaustion instead of hanging during executor shutdown.
           ./gradlew :app:assembleForkRelease -PversionName="$(cat version.txt)-performance" --no-daemon --stacktrace --max-workers=1 \
             -Dorg.gradle.parallel=false \
-            '-Dorg.gradle.jvmargs=-Xms256m -Xmx2g -XX:MaxMetaspaceSize=768m' \
-            '-Pkotlin.daemon.jvmargs=-Xmx2560m -XX:MaxMetaspaceSize=768m'
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx7g -XX:MaxMetaspaceSize=1536m -XX:+ExitOnOutOfMemoryError' \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            -Pandroid.r8.maxWorkers=1 -Pandroid.r8.threadPoolSize=2
 
       # Ephemeral test signing only. No production secrets or private key artifacts.
       - name: Sign and verify test APKs
