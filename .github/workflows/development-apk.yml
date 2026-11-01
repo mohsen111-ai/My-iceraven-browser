@@ -30,8 +30,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
       - name: Install required SDK packages
         run: |
+          command -v sdkmanager
+          sdkmanager --version
           sdkmanager 'platform-tools' 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865'
           printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
           df -h .
