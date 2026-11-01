@@ -240,6 +240,11 @@
             android:title="@string/preferences_about" />
 
         <androidx.preference.Preference
+            android:key="performance_test"
+            android:title="@string/performance_test_title"
+            app:iconSpaceReserved="false" />
+
+        <androidx.preference.Preference
             android:key="@string/pref_key_debug_settings"
             app:iconSpaceReserved="false"
             android:title="@string/preferences_debug_settings"
