@@ -1,0 +1,43 @@
+plugins {
+    alias(libs.plugins.kotlin.jvm)
+}
+
+kotlin {
+    jvmToolchain(17)
+    sourceSets {
+        main.kotlin {
+            setSrcDirs(['../../../app/src/main/java'])
+            include('org/mozilla/fenix/perf/PerformanceMath.kt')
+        }
+        test.kotlin {
+            setSrcDirs(['../../../app/src/test/java'])
+            include('org/mozilla/fenix/perf/PerformanceMathTest.kt')
+        }
+    }
+}
+
+// No copied implementation, Android sources, or unrelated application tests.
+sourceSets.main.java.setSrcDirs([])
+sourceSets.test.java.setSrcDirs([])
+
+dependencies {
+    testImplementation libs.junit4
+}
+
+tasks.named('test', Test) {
+    useJUnit()
+    maxHeapSize = '256m'
+    filter {
+        includeTestsMatching 'org.mozilla.fenix.perf.PerformanceMathTest'
+        failOnNoMatchingTests = true
+    }
+    testLogging { events 'passed', 'failed', 'skipped' }
+    afterSuite { descriptor, result ->
+        if (descriptor.parent == null) {
+            if (result.testCount != 5 || result.successfulTestCount != 5 || result.skippedTestCount != 0) {
+                throw new GradleException('Expected exactly five passing, non-skipped measurement tests')
+            }
+            logger.lifecycle('Verified: all five measurement tests passed')
+        }
+    }
+}

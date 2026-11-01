@@ -61,6 +61,17 @@ tests, builds optimized `forkRelease`, signs and verifies APKs, and retains them
 as artifacts for seven days. It reuses the working development toolchain and
 memory limits, but does not publish releases or upload to Play.
 
+The measurement tests run in the independent JVM build at
+`automation/iceraven/performance-tests`. It imports Kotlin and JUnit versions
+from the root version catalog and compiles only the existing `PerformanceMath.kt`
+and `PerformanceMathTest.kt` files. It does not load the Android root build or
+compile unrelated application tests. Run it from the repository root with
+`./gradlew -p automation/iceraven/performance-tests clean test` (Java 17 toolchain
+required). The test task and workflow report check both require exactly five
+passing, non-skipped tests. `clean` prevents an old report from satisfying the
+check. This isolates the measurement suite; it does not repair or validate the
+rest of the application's test suite.
+
 Each run creates an ephemeral RSA test key in runner temporary storage. Its
 password is the conventional public test password; no production credentials
 are used and the private key is never uploaded. Keys differ between runs.

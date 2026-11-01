@@ -61,16 +61,15 @@ jobs:
 
       - name: Test measurement calculations
         run: |
-          # AGP 9 only creates unit tests for android.testBuildType (debug by default).
-          # app/build.gradle maps this project property to android.testBuildType.
-          rm -f gradle/build/app/test-results/testForkReleaseUnitTest/TEST-org.mozilla.fenix.perf.PerformanceMathTest.xml
-          ./gradlew :app:testForkReleaseUnitTest --rerun -PtestBuildType=forkRelease -PversionName="$(cat version.txt)-performance" --tests 'org.mozilla.fenix.perf.PerformanceMathTest' \
+          # Compile only the real PerformanceMath source and its five JUnit tests.
+          # --tests on an Android variant would still compile all unrelated tests.
+          ./gradlew -p automation/iceraven/performance-tests clean test \
             --no-daemon --max-workers=1 -Dorg.gradle.parallel=false \
-            '-Dorg.gradle.jvmargs=-Xms256m -Xmx2g -XX:MaxMetaspaceSize=768m' \
-            '-Pkotlin.daemon.jvmargs=-Xmx2560m -XX:MaxMetaspaceSize=768m'
+            '-Dorg.gradle.jvmargs=-Xms128m -Xmx1g -XX:MaxMetaspaceSize=512m' \
+            -Pkotlin.compiler.execution.strategy=in-process
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
-          report = ET.parse('gradle/build/app/test-results/testForkReleaseUnitTest/TEST-org.mozilla.fenix.perf.PerformanceMathTest.xml').getroot()
+          report = ET.parse('automation/iceraven/performance-tests/build/test-results/test/TEST-org.mozilla.fenix.perf.PerformanceMathTest.xml').getroot()
           cases = report.findall('testcase')
           if len(cases) != 5 or any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped')):
               raise SystemExit('Expected exactly five passing, non-skipped measurement tests')
