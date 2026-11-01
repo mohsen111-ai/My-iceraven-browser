@@ -1,0 +1,104 @@
+name: Performance APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [iceraven]
+    paths:
+      - 'app/src/main/**'
+      - 'app/src/test/java/org/mozilla/fenix/perf/**'
+      - 'automation/iceraven/**'
+      - '.github/workflows/performance-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Gradle 9 needs Java 17+, and the Android plugin uses Java 21.
+      # Keep Java 17 available for the repository's compilation toolchain.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install required SDK packages
+        run: |
+          command -v sdkmanager
+          sdkmanager --version
+          sdkmanager 'platform-tools' 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          df -h .
+          free -h
+
+      - name: Prepare standalone build
+        run: bash automation/iceraven/prepare-development-build.sh
+
+      - name: Check fixture contracts
+        run: node automation/iceraven/test-performance-fixture.cjs
+
+      - name: Test measurement calculations
+        run: |
+          ./gradlew :app:testForkReleaseUnitTest -PversionName="$(cat version.txt)-performance" --tests 'org.mozilla.fenix.perf.PerformanceMathTest' \
+            --no-daemon --max-workers=1 -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx2g -XX:MaxMetaspaceSize=768m' \
+            '-Pkotlin.daemon.jvmargs=-Xmx2560m -XX:MaxMetaspaceSize=768m'
+
+      - name: Build optimized Iceraven APKs
+        run: |
+          ./gradlew :app:assembleForkRelease -PversionName="$(cat version.txt)-performance" --no-daemon --stacktrace --max-workers=1 \
+            -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx2g -XX:MaxMetaspaceSize=768m' \
+            '-Pkotlin.daemon.jvmargs=-Xmx2560m -XX:MaxMetaspaceSize=768m'
+
+      # Ephemeral test signing only. No production secrets or private key artifacts.
+      - name: Sign and verify test APKs
+        env:
+          TEST_KEYSTORE: ${{ runner.temp }}/performance-test.jks
+          APK_OUTPUT: ${{ runner.temp }}/performance-apks
+        run: |
+          keytool -genkeypair -keystore "$TEST_KEYSTORE" -storepass android -keypass android \
+            -alias performance -keyalg RSA -keysize 2048 -validity 30 \
+            -dname 'CN=Iceraven Ephemeral Performance Test' -noprompt
+          mkdir -p "$APK_OUTPUT"
+          shopt -s nullglob
+          apks=(gradle/build/app/outputs/apk/forkRelease/*.apk)
+          test "${#apks[@]}" -gt 0
+          for apk in "${apks[@]}"; do
+            output="$APK_OUTPUT/$(basename "$apk")"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+              --ks "$TEST_KEYSTORE" --ks-key-alias performance \
+              --ks-pass pass:android --key-pass pass:android --out "$output" "$apk"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$output"
+          done
+          rm -f "$TEST_KEYSTORE"
+
+      - name: Upload optimized test APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: iceraven-performance-apks
+          path: ${{ runner.temp }}/performance-apks/*.apk
+          if-no-files-found: error
+          retention-days: 7
