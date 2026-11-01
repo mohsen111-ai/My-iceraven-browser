@@ -1,0 +1,56 @@
+name: Development APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Gradle 9 needs Java 17+, and the Android plugin uses Java 21.
+      # Keep Java 17 available for the repository's compilation toolchain.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install required SDK packages
+        run: |
+          sdkmanager 'platform-tools' 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          df -h .
+          free -h
+
+      - name: Prepare standalone build
+        run: bash automation/iceraven/prepare-development-build.sh
+
+      - name: Build debug-signed Iceraven APKs
+        run: |
+          ./gradlew :app:assembleForkDebug --no-daemon --stacktrace --max-workers=2 \
+            -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx3g -XX:MaxMetaspaceSize=1g' \
+            -Pkotlin.daemon.jvmargs=-Xmx768m
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: iceraven-development-apks
+          path: gradle/build/app/outputs/apk/forkDebug/*.apk
+          if-no-files-found: error
+          retention-days: 7
