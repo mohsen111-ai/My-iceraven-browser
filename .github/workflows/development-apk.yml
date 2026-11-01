@@ -51,10 +51,10 @@ jobs:
 
       - name: Build debug-signed Iceraven APKs
         run: |
-          ./gradlew :app:assembleForkDebug --no-daemon --stacktrace --max-workers=2 \
+          ./gradlew :app:assembleForkDebug --no-daemon --stacktrace --max-workers=1 \
             -Dorg.gradle.parallel=false \
-            '-Dorg.gradle.jvmargs=-Xms256m -Xmx3g -XX:MaxMetaspaceSize=1g' \
-            -Pkotlin.daemon.jvmargs=-Xmx768m
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx2g -XX:MaxMetaspaceSize=768m' \
+            '-Pkotlin.daemon.jvmargs=-Xmx2560m -XX:MaxMetaspaceSize=768m'
 
       - name: Upload APKs
         uses: actions/upload-artifact@v7
