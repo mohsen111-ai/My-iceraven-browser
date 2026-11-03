@@ -28,11 +28,12 @@ class ProfileMarkerMiddleware<S : State, A : Action>(
         action: A,
     ) {
         next(action)
+        // The Gecko backend checks an atomic active flag. Avoid allocating a coroutine and
+        // queueing main-thread work for every store action when no profile is being recorded.
+        if (profiler?.isProfilerActive() != true) return
         scope.launch {
-            // Bug 1960730 blocks us recording these off the main thread. This will also be resolved
-            // when we move Stores off their dedicated thread in Bug 1980348 and then we can remove
-            // this scope.
-            profiler?.addMarker(markerName = markerName, text = action::class.java.name)
+            // Store actions can arrive on any thread; Java marker recording still needs Main.
+            profiler.addMarker(markerName = markerName, text = action::class.java.name)
         }
     }
 }

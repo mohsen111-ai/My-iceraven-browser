@@ -1,0 +1,54 @@
+plugins {
+    alias(libs.plugins.kotlin.jvm)
+}
+
+// Compile the real marker paths and Store, without configuring the Android application.
+// The existing performance-tests build and its exactly-five-tests contract stay separate.
+kotlin {
+    jvmToolchain(17)
+    sourceSets {
+        main.kotlin {
+            setSrcDirs([
+                '../../../app/src/main/java',
+                '../../../android-components/components/lib/state/src/main/java',
+                '../../../android-components/components/concept/base/src/main/java',
+                '../../../android-components/components/support/base/src/main/java',
+                'fixtures',
+            ])
+            include('org/mozilla/fenix/components/ProfileMarkerMiddleware.kt')
+            include('org/mozilla/fenix/perf/ProfilerMarkerFactProcessor.kt')
+            include('mozilla/components/lib/state/*.kt')
+            include('mozilla/components/concept/base/profiler/Profiler.kt')
+            include('mozilla/components/support/base/facts/*.kt')
+            include('mozilla/components/support/base/Component.kt')
+        }
+        test.kotlin {
+            setSrcDirs(['../../../app/src/test/java'])
+            include('org/mozilla/fenix/components/ProfileMarkerMiddlewareTest.kt')
+            include('org/mozilla/fenix/perf/ProfilerMarkerFactProcessorTest.kt')
+        }
+    }
+}
+sourceSets.main.java.setSrcDirs([])
+sourceSets.test.java.setSrcDirs([])
+
+dependencies {
+    implementation libs.kotlinx.coroutines.core
+    implementation libs.androidx.annotation
+    // Handler/Looper are mocked, never executed; no emulator or Android runtime is started.
+    implementation 'com.google.android:android:4.1.1.4'
+    testImplementation libs.junit4
+    testImplementation libs.mockk
+    testImplementation libs.kotlinx.coroutines.test
+}
+
+tasks.named('test', Test) {
+    useJUnit()
+    maxHeapSize = '512m'
+    testLogging { events 'passed', 'failed', 'skipped'; showStandardStreams = true }
+    afterSuite { descriptor, result ->
+        if (descriptor.parent == null && (result.testCount == 0 || result.skippedTestCount != 0)) {
+            throw new GradleException('Expected non-empty, non-skipped browsing regression tests')
+        }
+    }
+}
