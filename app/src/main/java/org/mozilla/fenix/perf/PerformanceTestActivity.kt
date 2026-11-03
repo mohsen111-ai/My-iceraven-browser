@@ -45,6 +45,7 @@ import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.WebRequestError
 
 /** An opt-in synthetic test. It never opens a normal browser tab or reads browser storage. */
 class PerformanceTestActivity : ComponentActivity() {
@@ -199,6 +200,7 @@ class PerformanceTestActivity : ComponentActivity() {
 
     private suspend fun measureGecko(): JSONObject {
         val token = UUID.randomUUID().toString()
+        val progressPrefix = "iceraven-performance:$token:"
         val completed = CompletableDeferred<JSONObject>()
         val fixture =
             withContext(Dispatchers.IO) {
@@ -217,7 +219,33 @@ class PerformanceTestActivity : ComponentActivity() {
         val started = SystemClock.elapsedRealtimeNanos()
         var loadRequestedAt = 0L
         var pageStopNanos: Long? = null
-        val testSession = GeckoSession(GeckoSessionSettings.Builder().usePrivateMode(true).build())
+        var fixtureStarted = false
+        var partial = JSONObject()
+        val diagnostics = JSONObject().put("script_started", false)
+        val events = JSONArray()
+        fun record(event: String) {
+            if (completed.isCompleted) return
+            diagnostics.put("last_native_event", event)
+            if (events.length() < 40) {
+                events.put(
+                    JSONObject()
+                        .put("event", event)
+                        .put(
+                            "elapsed_ms",
+                            (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000.0,
+                        )
+                )
+            }
+        }
+        fun fail(message: String) {
+            if (!completed.isCompleted) {
+                completed.complete(JSONObject(partial.toString()).put("error", message))
+            }
+        }
+        val testSession =
+            GeckoSession(
+                GeckoSessionSettings.Builder().usePrivateMode(true).allowJavascript(true).build()
+            )
         session = testSession
         testSession.navigationDelegate =
             object : GeckoSession.NavigationDelegate {
@@ -232,32 +260,93 @@ class PerformanceTestActivity : ComponentActivity() {
                             uri.path == "/report" &&
                             uri.getQueryParameter("token") == token
                     ) {
+                        record("report_received")
                         try {
                             val data =
                                 uri.getQueryParameter("data") ?: error("Missing fixture report")
                             require(data.length < 16384) { "Fixture report too large" }
-                            completed.complete(JSONObject(data))
-                        } catch (error: Exception) {
-                            completed.completeExceptionally(error)
+                            val report = JSONObject(data)
+                            require(report.getInt("fixture") == 2) { "Unexpected fixture version" }
+                            completed.complete(report)
+                        } catch (_: Exception) {
+                            fail("Invalid fixture report")
                         }
+                        return GeckoResult.fromValue(AllowOrDeny.DENY)
                     }
                     // No links, redirects, popups or report requests leave the fixture session.
-                    return GeckoResult.fromValue(
-                        if (uri.scheme == "data" || request.uri == "about:blank") AllowOrDeny.ALLOW
-                        else AllowOrDeny.DENY
-                    )
+                    if (uri.scheme == "data" || request.uri == "about:blank") {
+                        if (uri.scheme == "data") record("fixture_navigation_allowed")
+                        return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                    }
+                    record("unexpected_navigation_denied")
+                    fail("Unexpected fixture navigation denied")
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
+                }
+
+                override fun onLoadError(
+                    session: GeckoSession,
+                    uri: String?,
+                    error: WebRequestError,
+                ): GeckoResult<String>? {
+                    record("load_error")
+                    // Do not export the data URI, report token or request URLs.
+                    fail("Gecko load error: category=${error.category}, code=${error.code}")
+                    return null
                 }
             }
         testSession.progressDelegate =
             object : GeckoSession.ProgressDelegate {
+                override fun onPageStart(session: GeckoSession, url: String) {
+                    if (url.startsWith("data:")) {
+                        fixtureStarted = true
+                        record("fixture_page_start")
+                    }
+                }
+
                 override fun onPageStop(session: GeckoSession, success: Boolean) {
+                    // Ignore the session's initial about:blank callbacks.
+                    if (!fixtureStarted || completed.isCompleted) return
+                    record(
+                        if (success) "fixture_page_stop_success" else "fixture_page_stop_failure"
+                    )
                     if (success && loadRequestedAt > 0 && pageStopNanos == null) {
                         pageStopNanos = SystemClock.elapsedRealtimeNanos() - loadRequestedAt
                     }
-                    if (!success && !completed.isCompleted)
-                        completed.completeExceptionally(
-                            IllegalStateException("Fixture navigation failed")
-                        )
+                    if (!success) fail("Fixture navigation failed")
+                }
+            }
+        testSession.contentDelegate =
+            object : GeckoSession.ContentDelegate {
+                override fun onTitleChange(session: GeckoSession, title: String?) {
+                    if (completed.isCompleted || title?.startsWith(progressPrefix) != true) return
+                    try {
+                        require(title.length < 16384)
+                        val progress = JSONObject(title.removePrefix(progressPrefix))
+                        partial = progress.getJSONObject("result")
+                        require(partial.getInt("fixture") == 2)
+                        val stage = progress.getString("stage")
+                        require(stage.matches(Regex("[a-z0-9-]{1,40}")))
+                        diagnostics.put("script_started", true)
+                        diagnostics.put("last_fixture_stage", stage)
+                        record("fixture_progress")
+                        status.text = "1/3: Gecko fixture: $stage…"
+                    } catch (_: Exception) {
+                        fail("Invalid fixture progress message")
+                    }
+                }
+
+                override fun onFirstComposite(session: GeckoSession) {
+                    record("first_composite")
+                }
+
+                override fun onCrash(session: GeckoSession) {
+                    record("content_crash")
+                    fail("Gecko content process crashed")
+                }
+
+                override fun onKill(session: GeckoSession) {
+                    record("content_killed")
+                    fail("Gecko content process was killed")
                 }
             }
         try {
@@ -266,28 +355,51 @@ class PerformanceTestActivity : ComponentActivity() {
                 true,
             )
             testSession.open(components.core.geckoRuntime)
+            record("session_open_requested")
             engineView.setSession(testSession)
+            record("view_attached")
             testSession.setActive(true)
+            record("session_active_requested")
             loadRequestedAt = SystemClock.elapsedRealtimeNanos()
-            testSession.load(GeckoSession.Loader().data(fixture, "text/html"))
-            return withTimeout(60_000) { completed.await() }
-                .apply {
-                    pageStopNanos?.let {
-                        put("native_load_request_to_page_stop_ms", it / 1_000_000.0)
-                    }
-                    put(
-                        "whole_fixture_elapsed_ms",
-                        (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000.0,
-                    )
-                    put(
-                        "page_source",
-                        "Bundled document; navigation timings exclude network transfer",
-                    )
-                    put(
-                        "image_source",
-                        "Pinned GitHub PNG; 38625 bytes each; three uncached requests",
-                    )
+            record("fixture_load_requested")
+            // The String overload embeds raw text in a data URI: CSS '#' starts a fragment
+            // and truncates the HTML before the script. The byte overload Base64-encodes it.
+            testSession.load(
+                GeckoSession.Loader().data(fixture.toByteArray(Charsets.UTF_8), "text/html")
+            )
+            val result =
+                try {
+                    withTimeout(60_000) { completed.await() }
+                } catch (_: TimeoutCancellationException) {
+                    val stage = diagnostics.optString("last_fixture_stage", "script not observed")
+                    record("timeout")
+                    fail("Gecko timed out after 60 seconds; last fixture stage: $stage")
+                    completed.await()
                 }
+            return result.apply {
+                put("diagnostics", diagnostics.put("events", events))
+                pageStopNanos?.let {
+                    put("native_load_request_to_page_stop_ms", it / 1_000_000.0)
+                }
+                put(
+                    "whole_fixture_elapsed_ms",
+                    (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000.0,
+                )
+                put(
+                    "page_source",
+                    "Bundled document; navigation timings exclude network transfer",
+                )
+                put(
+                    "image_source",
+                    "Pinned GitHub PNG; 38625 bytes each; three uncached requests",
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            return JSONObject(partial.toString())
+                .put("error", "Gecko setup/execution failed: ${error.javaClass.simpleName}")
+                .put("diagnostics", diagnostics.put("events", events))
         } finally {
             closeSession()
         }
@@ -492,6 +604,12 @@ class PerformanceTestActivity : ComponentActivity() {
             metric("DOM work to render opportunity", gecko, "fixture_dom_to_render_opportunity_ms")
             for (key in listOf("error", "page_error", "image_error", "javascript_error")) {
                 if (gecko?.has(key) == true) appendLine(gecko.getString(key))
+            }
+            gecko?.optJSONObject("diagnostics")?.let {
+                appendLine("Gecko callback: ${it.optString("last_native_event", "none")}")
+                appendLine(
+                    "Fixture stage: ${it.optString("last_fixture_stage", "script not observed")}"
+                )
             }
             val images = gecko?.optJSONArray("images")
             for (index in 0 until (images?.length() ?: 0)) {

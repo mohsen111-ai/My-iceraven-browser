@@ -1,4 +1,4 @@
-# Performance Test, fixture version 1
+# Performance Test, fixture version 2
 
 Open **Settings → Performance Test → Run Test**. Confirm the approximately
 10.2 MiB transfer and keep the screen visible. The screen shows stage progress,
@@ -11,6 +11,46 @@ JSON; Clear saved results deletes that local history. No browsing history,
 user tabs, accounts, cookies, visited URLs, serial numbers or advertising IDs
 are read. Exports include device model, Android/browser versions, build type,
 timestamp, measurements and errors. Review these before sharing.
+
+## Gecko fixture loading and diagnostics
+
+Version 1 passed raw HTML to `GeckoSession.Loader.data(String, "text/html")`.
+That overload concatenates a data URI without escaping the payload. The first
+CSS color (`#fafafa`) became a URI fragment, cutting off the HTML before the
+script. A successful page-stop callback therefore did not mean the benchmark
+had executed, and the result wait expired with no JavaScript measurements.
+Version 2 passes UTF-8 bytes to the Base64-encoding overload instead.
+
+The dedicated private session still uses the existing runtime, registers its
+delegates before opening, attaches to the visible GeckoView, and becomes active
+before loading. JavaScript is explicitly enabled for this session only. The
+60-second overall deadline is unchanged. No extension, global JavaScript, R8,
+or Development APK workflow settings are changed.
+
+Token-scoped title checkpoints record script startup, page/frame waits, CPU
+work, each image fetch/decode/frame wait, and report readiness without navigating.
+The final report navigation is still intercepted and denied before network access.
+Reports include `gecko.diagnostics`: the last native callback, last fixture stage,
+script-start observation, and up to 40 timestamped events. Load errors report
+Gecko's numeric category/code; crashes and process kills fail immediately.
+Diagnostics omit document URLs and the per-run token. Initial `about:blank`
+callbacks are excluded from the fixture's native page-load measurement.
+
+Animation frames have a 3-second watchdog; document-load and image-decode waits
+have 5-second watchdogs. These produce explicit errors, never invented timings.
+JavaScript work runs before the image transfers, and title checkpoints retain
+partial results if the final report never arrives. A timeout distinguishes
+`script not observed` from the last reported stage (for example `page-frames`
+or `image-1-decode`). It also preserves any native page-stop timing.
+Fixture version 2 changes ordering and adds diagnostic overhead; compare runs
+within the same fixture version.
+
+The Node contract check now assembles and round-trips the actual HTML through
+the byte-overload URI format before executing its script. It reproduces the
+old fragment truncation and tests stalled frames, load, decode, fetch aborts,
+backgrounding, cleanup, checkpoints, and independent CPU results. It remains
+a mock-browser check; Actions compilation and a new on-device run are required
+to verify Gecko integration and actual rendering on Android.
 
 ## Measurement scope and limitations
 
@@ -107,6 +147,9 @@ Required device checks:
 
 1. Run, repeat, cancel during every stage, navigate away, rotate, and restart.
    Check cleanup, saved partial reports, and prevention of concurrent runs.
+   On the Infinix X6873 / Android 16, verify that the visible fixture reaches
+   `report-ready`, JavaScript has five samples, and image/page failures have
+   specific errors. If it fails, copy the report including `gecko.diagnostics`.
 2. Offline mode, blocked image host, slow/stalled transfers and HTTP failures.
    Check errors, bounded memory, and absence of fabricated scores.
 3. Copy/share/clear, ten-report retention, accurate metadata and no user URLs.
