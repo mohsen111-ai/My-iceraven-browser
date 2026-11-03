@@ -1,0 +1,126 @@
+name: Performance APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [iceraven]
+    paths:
+      - 'app/src/main/**'
+      - 'app/src/test/java/org/mozilla/fenix/perf/**'
+      - 'automation/iceraven/**'
+      - '.github/workflows/performance-apk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Gradle 9 needs Java 17+, and the Android plugin uses Java 21.
+      # Keep Java 17 available for the repository's compilation toolchain.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install required SDK packages
+        run: |
+          command -v sdkmanager
+          sdkmanager --version
+          sdkmanager 'platform-tools' 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865'
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          df -h .
+          free -h
+
+      - name: Prepare standalone build
+        run: bash automation/iceraven/prepare-development-build.sh
+
+      - name: Check fixture contracts
+        run: node automation/iceraven/test-performance-fixture.cjs
+
+      - name: Test measurement calculations
+        run: |
+          # Compile only the real PerformanceMath source and its five JUnit tests.
+          # --tests on an Android variant would still compile all unrelated tests.
+          ./gradlew -p automation/iceraven/performance-tests clean test \
+            --no-daemon --max-workers=1 -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xms128m -Xmx1g -XX:MaxMetaspaceSize=512m' \
+            -Pkotlin.compiler.execution.strategy=in-process
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          report = ET.parse('automation/iceraven/performance-tests/build/test-results/test/TEST-org.mozilla.fenix.perf.PerformanceMathTest.xml').getroot()
+          cases = report.findall('testcase')
+          if len(cases) != 5 or any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped')):
+              raise SystemExit('Expected exactly five passing, non-skipped measurement tests')
+          print('Verified: all five measurement tests passed')
+          PY
+
+      - name: Build optimized Iceraven APKs
+        timeout-minutes: 60
+        run: |
+          # Standard public Linux runners have 16 GB RAM; private ones may have 7 GB.
+          # Budget: 7 GiB heap + 1.5 GiB metaspace, leaving room for native memory/OS.
+          available_kib=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+          if (( available_kib < 14 * 1024 * 1024 )); then
+            echo '::error::Optimized R8 build requires a runner with at least 14 GiB RAM. Use the standard public 16 GB Linux runner or a provisioned runner with at least 16 GB.'
+            exit 1
+          fi
+          free -h
+          # R8 runs inside Gradle. Keep Kotlin in-process to avoid a second compiler heap.
+          # Exit immediately on heap exhaustion instead of hanging during executor shutdown.
+          ./gradlew :app:assembleForkRelease -PversionName="$(cat version.txt)-performance" --no-daemon --stacktrace --max-workers=1 \
+            -Dorg.gradle.parallel=false \
+            '-Dorg.gradle.jvmargs=-Xms256m -Xmx7g -XX:MaxMetaspaceSize=1536m -XX:+ExitOnOutOfMemoryError' \
+            -Pkotlin.compiler.execution.strategy=in-process \
+            -Pandroid.r8.maxWorkers=1 -Pandroid.r8.threadPoolSize=2
+
+      # Ephemeral test signing only. No production secrets or private key artifacts.
+      - name: Sign and verify test APKs
+        env:
+          TEST_KEYSTORE: ${{ runner.temp }}/performance-test.jks
+          APK_OUTPUT: ${{ runner.temp }}/performance-apks
+        run: |
+          keytool -genkeypair -keystore "$TEST_KEYSTORE" -storepass android -keypass android \
+            -alias performance -keyalg RSA -keysize 2048 -validity 30 \
+            -dname 'CN=Iceraven Ephemeral Performance Test' -noprompt
+          mkdir -p "$APK_OUTPUT"
+          shopt -s nullglob
+          apks=(gradle/build/app/outputs/apk/forkRelease/*.apk)
+          test "${#apks[@]}" -gt 0
+          for apk in "${apks[@]}"; do
+            output="$APK_OUTPUT/$(basename "$apk")"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+              --ks "$TEST_KEYSTORE" --ks-key-alias performance \
+              --ks-pass pass:android --key-pass pass:android --out "$output" "$apk"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$output"
+          done
+          rm -f "$TEST_KEYSTORE"
+
+      - name: Upload optimized test APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: iceraven-performance-apks
+          path: ${{ runner.temp }}/performance-apks/*.apk
+          if-no-files-found: error
+          retention-days: 7

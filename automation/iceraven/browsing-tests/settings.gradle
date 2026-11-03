@@ -1,0 +1,21 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'iceraven-browsing-tests'
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    versionCatalogs {
+        libs {
+            from(files('../../../gradle/libs.versions.toml'))
+            plugin('kotlin-jvm', 'org.jetbrains.kotlin.jvm').versionRef('kotlin')
+        }
+    }
+}

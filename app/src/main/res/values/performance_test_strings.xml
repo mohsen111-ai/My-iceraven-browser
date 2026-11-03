@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="performance_test_title">Performance Test</string>
+    <string name="performance_test_run">Run Test</string>
+    <string name="performance_test_copy">Copy recent results</string>
+    <string name="performance_test_share">Share recent results</string>
+    <string name="performance_test_clear">Clear saved results</string>
+    <string name="performance_test_idle">Ready. Keep this screen visible during testing.</string>
+    <string name="performance_test_copied">Recent results copied.</string>
+    <string name="performance_test_explanation">Synthetic Gecko page, images, JavaScript, native UI frames and a separate network probe. Results are not a website speed score. Cold startup is unavailable. The ten most recent reports stay on this device until cleared. Exports include device model, Android and browser versions, but no browsing history.</string>
+    <string name="performance_test_consent">Download about 10.2 MiB? Data charges may apply. Cloudflare serves a 10 MiB test response and GitHub serves three 38,625-byte images. These providers receive your IP address and normal HTTPS request metadata. Files are discarded. Keep the screen visible; leaving cancels the run. Image rendering timings are render opportunities, not verified display times. No browser history is read or sent.</string>
+</resources>

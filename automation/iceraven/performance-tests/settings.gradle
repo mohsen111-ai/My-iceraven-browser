@@ -1,0 +1,19 @@
+// Independent JVM build: do not load the Android root project's settings/plugins.
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'iceraven-performance-tests'
+
+dependencyResolutionManagement {
+    repositories { mavenCentral() }
+    versionCatalogs {
+        libs {
+            from(files('../../../gradle/libs.versions.toml'))
+            plugin('kotlin-jvm', 'org.jetbrains.kotlin.jvm').versionRef('kotlin')
+        }
+    }
+}

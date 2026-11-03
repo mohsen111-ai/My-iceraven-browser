@@ -361,6 +361,10 @@ class SettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragment 
 
     @Suppress("LongMethod", "CyclomaticComplexMethod")
     override fun onPreferenceTreeClick(preference: Preference): Boolean {
+        if (preference.key == "performance_test") {
+            startActivity(android.content.Intent(requireContext(), org.mozilla.fenix.perf.PerformanceTestActivity::class.java))
+            return true
+        }
         // Hide the scrollbar so the animation looks smoother
         val recyclerView = requireView().findViewById<RecyclerView>(R.id.recycler_view)
         recyclerView.isVerticalScrollBarEnabled = false

@@ -17,6 +17,7 @@ import mozilla.components.concept.base.profiler.Profiler
 import mozilla.components.support.base.Component
 import mozilla.components.support.base.facts.Action
 import mozilla.components.support.base.facts.Fact
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -32,8 +33,53 @@ class ProfilerMarkerFactProcessorTest {
     @Before
     fun setUp() {
         MockKAnnotations.init(this)
+        every { profiler.isProfilerActive() } returns true
         myLooper = null
         processor = ProfilerMarkerFactProcessor({ profiler }, mainHandler, { myLooper })
+    }
+
+    @Test
+    fun `inactive profiler skips background posts and timestamp work`() {
+        every { profiler.isProfilerActive() } returns false
+        myLooper = mockk()
+        var posts = 0
+        every { mainHandler.post(any()) } answers
+            {
+                posts++
+                true
+            }
+        repeat(10_000) { processor.process(newFact(Action.IMPLEMENTATION_DETAIL)) }
+        println("10,000 background facts: $posts marker tasks queued (profiler inactive)")
+        assertEquals(0, posts)
+        verify(exactly = 0) { profiler.getProfilerTime() }
+        verifyProfilerAddMarkerWasNotCalled()
+    }
+
+    @Test
+    fun `inactive profiler skips main thread marker work`() {
+        every { profiler.isProfilerActive() } returns false
+        myLooper = mainHandler.looper
+        processor.process(newFact(Action.IMPLEMENTATION_DETAIL))
+        verify(exactly = 0) { mainHandler.post(any()) }
+        verifyProfilerAddMarkerWasNotCalled()
+    }
+
+    @Test
+    fun `missing profiler does not post or inspect the caller looper`() {
+        val noProfiler =
+            ProfilerMarkerFactProcessor({ null }, mainHandler, { error("Unexpected looper query") })
+        noProfiler.process(newFact(Action.IMPLEMENTATION_DETAIL))
+        verify(exactly = 0) { mainHandler.post(any()) }
+    }
+
+    @Test
+    fun `profiling can start after a skipped fact`() {
+        myLooper = mainHandler.looper
+        every { profiler.isProfilerActive() } returns false
+        processor.process(newFact(Action.IMPLEMENTATION_DETAIL))
+        every { profiler.isProfilerActive() } returns true
+        processor.process(newFact(Action.IMPLEMENTATION_DETAIL))
+        verify(exactly = 1) { profiler.addMarker("itemName", null as String?) }
     }
 
     @Test

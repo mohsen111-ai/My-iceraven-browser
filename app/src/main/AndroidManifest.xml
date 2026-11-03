@@ -80,6 +80,8 @@
         android:enableOnBackInvokedCallback="@bool/enableOnBackInvokedCallback"
         tools:ignore="UnusedAttribute">
 
+        <activity android:name=".perf.PerformanceTestActivity" android:exported="false" />
+
         <profileable
             android:shell="true"
             tools:targetApi="29" />
